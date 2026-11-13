@@ -1,4 +1,4 @@
-// RuntimeClips-Web — Definiciones de tipos del Pipeline y Entorno Habbo Hotel
+// RuntimeClips-Web — Definiciones de tipos del Pipeline y Oficina Agéntica 2D
 
 export type NodeStatus = 'idle' | 'running' | 'completed' | 'error';
 export type PipelineStatus = 'idle' | 'running' | 'completed' | 'error';
@@ -17,6 +17,7 @@ export interface PipelineNode {
   durationMs: number | null;
   data: any;
   error: string | null;
+  logs: string[];
 }
 
 export interface PipelineEdge {
@@ -81,15 +82,4 @@ export interface BrandKit {
     accent2: string;
     card: string;
   };
-}
-
-export interface HabboSpeechBubble {
-  id: string;
-  agentKey: string;
-  agentName: string;
-  text: string;
-  screenX: number;
-  screenY: number;
-  createdAt: number;
-  expiresAt: number;
 }

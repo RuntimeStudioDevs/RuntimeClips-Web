@@ -1,4 +1,4 @@
-// RuntimeClips-Web — Store Pinia reactivo para el Pipeline, SSE y Estado de la Sala Habbo
+// RuntimeClips-Web — Store Pinia reactivo para el Pipeline de 9 Nodos y la Oficina 2D
 
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
@@ -7,27 +7,28 @@ import type {
   PipelineEdge,
   LogEntry,
   PipelineState,
-  BrandKit,
-  HabboSpeechBubble,
   ClipData,
 } from '@/types/pipeline';
-import { habboAudio } from '@/engine/audio';
+import type { AgentSession, AgentStatus } from '@/engine/office2d/types';
 
 export const usePipelineStore = defineStore('pipeline', () => {
-  // Estado de vista
-  const currentView = ref<'habbo' | 'graph'>('habbo');
-  const isMessengerOpen = ref(false);
-  const isCatalogOpen = ref(false);
+  // Estado de vista y paneles
+  const currentView = ref<'office' | 'graph'>('office');
+  const isInspectorOpen = ref(false);
   const isPlayerOpen = ref(false);
-  const isMuted = ref(habboAudio.isMuted());
+  const isBackendMode = ref(false); // Toggle entre Simulación Local y Backend Real
 
-  // Estado del Pipeline
+  // Estado del Pipeline Global
   const pipeline = ref<PipelineState>({
     runId: null,
     status: 'idle',
-    url: null,
-    sourceType: null,
-    options: {},
+    url: 'https://youtube.com/watch?v=sample-runtime',
+    sourceType: 'youtube',
+    options: {
+      minScore: 0.8,
+      aspectRatio: '9:16',
+      maxClips: 3,
+    },
     startedAt: null,
     finishedAt: null,
     error: null,
@@ -36,38 +37,27 @@ export const usePipelineStore = defineStore('pipeline', () => {
 
   const nodes = ref<Map<string, PipelineNode>>(new Map());
   const edges = ref<PipelineEdge[]>([
-    { from: 'input', to: 'ingest' },
-    { from: 'ingest', to: 'transcribe' },
-    { from: 'transcribe', to: 'hook' },
+    { from: 'ingest', to: 'vision' },
+    { from: 'vision', to: 'facetrack' },
+    { from: 'facetrack', to: 'music' },
+    { from: 'music', to: 'subtitles' },
+    { from: 'subtitles', to: 'broll' },
+    { from: 'broll', to: 'render' },
+    { from: 'render', to: 'qa' },
+    { from: 'qa', to: 'publisher' },
   ]);
+
   const logs = ref<LogEntry[]>([]);
   const selectedNodeKey = ref<string | null>(null);
   const activePreviewClip = ref<ClipData | null>(null);
 
-  // Brand Kits
-  const brands = ref<BrandKit[]>([{ id: 'default', name: 'Cyberpunk Habbo' }]);
-  const selectedBrand = ref('default');
-
-  // Globos de diálogo Habbo
-  const speechBubbles = ref<HabboSpeechBubble[]>([]);
-
-  // SSE connection
-  let eventSource: EventSource | null = null;
-  const sseConnected = ref(false);
-
-  // Nodos como array ordenado para templates
-  const nodeList = computed(() => Array.from(nodes.value.values()));
-  const selectedNode = computed(() =>
-    selectedNodeKey.value ? nodes.value.get(selectedNodeKey.value) ?? null : null
-  );
-
-  // Inicializar nodos troncales por defecto
+  // Inicializar los 9 Agentes Especializados de RuntimeClips
   function initDefaultNodes() {
-    const trunk: PipelineNode[] = [
+    const list: PipelineNode[] = [
       {
-        key: 'input',
-        label: 'Recepción y URL',
-        subtitle: 'Nexus — Entrada',
+        key: 'ingest',
+        label: 'Ingest & Whisper',
+        subtitle: 'Descarga y audio a -14 LUFS',
         icon: '📥',
         status: 'idle',
         progress: 0,
@@ -76,12 +66,13 @@ export const usePipelineStore = defineStore('pipeline', () => {
         durationMs: null,
         data: null,
         error: null,
+        logs: ['[Ingest] En espera de URL o video local.'],
       },
       {
-        key: 'ingest',
-        label: 'Servidor de Descarga',
-        subtitle: 'Byte — Datacenter',
-        icon: '⚡',
+        key: 'vision',
+        label: 'Editorial Vision',
+        subtitle: 'Detección de ganchos virales',
+        icon: '🧠',
         status: 'idle',
         progress: 0,
         startedAt: null,
@@ -89,24 +80,12 @@ export const usePipelineStore = defineStore('pipeline', () => {
         durationMs: null,
         data: null,
         error: null,
+        logs: ['[Vision] Modelos Gemini / Claude listos para analizar ganchos.'],
       },
       {
-        key: 'transcribe',
-        label: 'Cabina Acústica Whisper',
-        subtitle: 'Echo — Estudio',
-        icon: '🎙️',
-        status: 'idle',
-        progress: 0,
-        startedAt: null,
-        finishedAt: null,
-        durationMs: null,
-        data: null,
-        error: null,
-      },
-      {
-        key: 'hook',
-        label: 'Despacho de Dirección',
-        subtitle: 'Viral — Viralidad',
+        key: 'facetrack',
+        label: 'Face Track UltraFace',
+        subtitle: 'Rastreo facial y recorte 9:16',
         icon: '🎯',
         status: 'idle',
         progress: 0,
@@ -115,12 +94,13 @@ export const usePipelineStore = defineStore('pipeline', () => {
         durationMs: null,
         data: null,
         error: null,
+        logs: ['[FaceTrack] Red ONNX UltraFace inicializada.'],
       },
       {
-        key: 'collector',
-        label: 'Empaquetador .ZIP',
-        subtitle: 'Boxer — Almacén',
-        icon: '📦',
+        key: 'music',
+        label: 'Beat & Music Sync',
+        subtitle: 'Análisis de tempo y ritmo',
+        icon: '🎵',
         status: 'idle',
         progress: 0,
         startedAt: null,
@@ -128,12 +108,13 @@ export const usePipelineStore = defineStore('pipeline', () => {
         durationMs: null,
         data: null,
         error: null,
+        logs: ['[MusicSync] Detector de transitorios de audio listo.'],
       },
       {
-        key: 'player',
-        label: 'Cine de Proyección',
-        subtitle: 'Showcase — Cartelera',
-        icon: '🎬',
+        key: 'subtitles',
+        label: 'Subtitle Styler',
+        subtitle: 'Animación de subtítulos dinámicos',
+        icon: '💬',
         status: 'idle',
         progress: 0,
         startedAt: null,
@@ -141,195 +122,152 @@ export const usePipelineStore = defineStore('pipeline', () => {
         durationMs: null,
         data: null,
         error: null,
+        logs: ['[Subtitles] Plantilla tipográfica vertical cargada.'],
+      },
+      {
+        key: 'broll',
+        label: 'B-Roll & Overlays',
+        subtitle: 'Inserción de recursos visuales',
+        icon: '🎨',
+        status: 'idle',
+        progress: 0,
+        startedAt: null,
+        finishedAt: null,
+        durationMs: null,
+        data: null,
+        error: null,
+        logs: ['[B-Roll] Banco de recursos y animaciones listo.'],
+      },
+      {
+        key: 'render',
+        label: 'Render FFmpeg',
+        subtitle: 'Compilación por hardware GPU',
+        icon: '⚡',
+        status: 'idle',
+        progress: 0,
+        startedAt: null,
+        finishedAt: null,
+        durationMs: null,
+        data: null,
+        error: null,
+        logs: ['[Render] Pipeline FFmpeg NVENC/libx264 configurado.'],
+      },
+      {
+        key: 'qa',
+        label: 'QA Gatekeeper',
+        subtitle: 'Auditoría de calidad y límites',
+        icon: '🛡️',
+        status: 'idle',
+        progress: 0,
+        startedAt: null,
+        finishedAt: null,
+        durationMs: null,
+        data: null,
+        error: null,
+        logs: ['[QA] Reglas de validación estricta preparadas.'],
+      },
+      {
+        key: 'publisher',
+        label: 'Social Publisher',
+        subtitle: 'Empaquetado ZIP y metadatos',
+        icon: '🚀',
+        status: 'idle',
+        progress: 0,
+        startedAt: null,
+        finishedAt: null,
+        durationMs: null,
+        data: null,
+        error: null,
+        logs: ['[Publisher] Generador de metadatos TikTok/Reels/Shorts listo.'],
       },
     ];
 
     nodes.value.clear();
-    for (const node of trunk) {
-      nodes.value.set(node.key, node);
+    for (const item of list) {
+      nodes.value.set(item.key, item);
     }
   }
 
-  // Conectar con el stream SSE del backend
-  function connectSSE() {
-    if (eventSource) return;
-
-    try {
-      eventSource = new EventSource('/api/pipeline/stream');
-
-      eventSource.onopen = () => {
-        sseConnected.value = true;
-      };
-
-      eventSource.onerror = () => {
-        sseConnected.value = false;
-      };
-
-      eventSource.addEventListener('snapshot', (e: MessageEvent) => {
-        const snap = JSON.parse(e.data);
-        pipeline.value = snap.pipeline;
-        edges.value = snap.edges || [];
-        logs.value = snap.logs || [];
-
-        nodes.value.clear();
-        for (const n of snap.nodes || []) {
-          nodes.value.set(n.key, n);
-        }
-      });
-
-      eventSource.addEventListener('graph_expanded', (e: MessageEvent) => {
-        const data = JSON.parse(e.data);
-        edges.value = data.edges || [];
-
-        for (const n of data.nodes || []) {
-          nodes.value.set(n.key, n);
-        }
-        habboAudio.playDoorbell();
-      });
-
-      eventSource.addEventListener('node', (e: MessageEvent) => {
-        const n: PipelineNode = JSON.parse(e.data);
-        const prev = nodes.value.get(n.key);
-        nodes.value.set(n.key, n);
-
-        if (n.status === 'completed' && prev?.status !== 'completed') {
-          habboAudio.playBubble();
-          // Añadir globo de diálogo automático
-          triggerAgentSpeech(n.key, getSuccessMessageForNode(n.key));
-        } else if (n.status === 'error' && prev?.status !== 'error') {
-          habboAudio.playErrorBobba();
-          triggerAgentSpeech(n.key, `¡Bobba! Ocurrió un error en esta etapa.`);
-        }
-      });
-
-      eventSource.addEventListener('log', (e: MessageEvent) => {
-        const entry: LogEntry = JSON.parse(e.data);
-        logs.value.push(entry);
-        if (logs.value.length > 500) logs.value.shift();
-      });
-
-      eventSource.addEventListener('pipeline', (e: MessageEvent) => {
-        pipeline.value = JSON.parse(e.data);
-        if (pipeline.value.status === 'completed') {
-          habboAudio.playFanfare();
-          if (pipeline.value.output?.clips?.length) {
-            activePreviewClip.value = pipeline.value.output.clips[0];
-            isPlayerOpen.value = true;
-          }
-        }
-      });
-    } catch (err) {
-      console.warn('Backend offline o inaccesible (modo local mock disponible):', err);
-    }
-  }
-
-  function getSuccessMessageForNode(key: string): string {
-    if (key === 'input') return 'Nexus: ¡URL verificada y aceptada!';
-    if (key === 'ingest') return 'Byte: Video 1080p descargado al servidor.';
-    if (key === 'transcribe') return 'Echo: Audio a -14 LUFS y transcripción lista.';
-    if (key === 'hook') return 'Viral: ¡Ganchos detectados! Despachando a producción.';
-    if (key.startsWith('reframe')) return 'Focus: Reencuadre 9:16 UltraFace listo.';
-    if (key.startsWith('overlays')) return 'Vector: Capas visuales aplicadas.';
-    if (key.startsWith('captions')) return 'Typo: Subtítulos dinámicos renderizados.';
-    if (key.startsWith('render')) return 'Master: ¡Reel final exportado en MP4!';
-    if (key === 'collector') return 'Boxer: ¡Paquete .ZIP sellado y empaquetado!';
-    if (key === 'player') return 'Showcase: ¡Reels listos en la gran pantalla!';
-    return '¡Etapa completada con éxito!';
-  }
-
-  // Activa una burbuja de diálogo flotante para un agente
-  function triggerAgentSpeech(agentKey: string, text: string) {
-    const bubbleId = `${agentKey}-${Date.now()}`;
-    const agentNames: Record<string, string> = {
-      input: 'Nexus',
-      ingest: 'Byte',
-      transcribe: 'Echo',
-      hook: 'Viral',
-      collector: 'Boxer',
-      player: 'Showcase',
-    };
-    const name = agentNames[agentKey] || (agentKey.startsWith('reframe') ? 'Focus' : agentKey.startsWith('overlays') ? 'Vector' : agentKey.startsWith('captions') ? 'Typo' : 'Master');
-
-    // Descartar burbujas anteriores del mismo agente
-    speechBubbles.value = speechBubbles.value.filter((b) => b.agentKey !== agentKey);
-
-    speechBubbles.value.push({
-      id: bubbleId,
-      agentKey,
-      agentName: name,
-      text,
-      screenX: 0, // Se actualiza por speech.ts en el loop Three.js
-      screenY: 0,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + 5000,
-    });
-
-    habboAudio.playBubble();
-
-    setTimeout(() => {
-      speechBubbles.value = speechBubbles.value.filter((b) => b.id !== bubbleId);
-    }, 5000);
-  }
-
-  // Iniciar ejecución real hacia el backend de tu amigo
-  async function startPipeline(url: string, options: Record<string, any> = {}) {
-    const res = await fetch('/api/pipeline/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        url,
-        options: {
-          ...options,
-          brandId: selectedBrand.value,
-        },
-      }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `Error ${res.status} al iniciar pipeline.`);
-    }
-
-    return await res.json();
-  }
-
-  // Cargar Brand Kits
-  async function loadBrands() {
-    try {
-      const res = await fetch('/api/brands');
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.brands && data.brands.length) {
-        brands.value = data.brands.map((b: any) =>
-          typeof b === 'string' ? { id: b, name: b.toUpperCase() } : b
-        );
+  // Mapeo computado de nodos a sesiones del motor 2D
+  const agentSessions = computed<AgentSession[]>(() => {
+    return Array.from(nodes.value.values()).map((node) => {
+      let status: AgentStatus = 'idle';
+      if (node.status === 'running') {
+        status = node.progress > 0.8 ? 'typing' : node.progress > 0.4 ? 'tool' : 'thinking';
+      } else if (node.status === 'completed') {
+        status = 'done';
+      } else if (node.status === 'error') {
+        status = 'error';
       }
-    } catch {
-      // Usar defaults
-    }
-  }
+
+      return {
+        key: node.key,
+        agent: node.key,
+        name: node.label,
+        role: node.subtitle,
+        status,
+        progress: node.progress,
+        taskSummary: node.status === 'running' ? `${node.label} (${Math.round(node.progress * 100)}%)` : node.label,
+        startedAt: node.startedAt || undefined,
+        lastEventAt: node.finishedAt || node.startedAt || undefined,
+        logs: node.logs,
+      };
+    });
+  });
+
+  const selectedNode = computed(() => {
+    return selectedNodeKey.value ? nodes.value.get(selectedNodeKey.value) || null : null;
+  });
+
+  const nodeList = computed(() => Array.from(nodes.value.values()));
 
   function selectNode(key: string | null) {
     selectedNodeKey.value = key;
-    if (key) {
-      habboAudio.playFurniClick();
-      isMessengerOpen.value = true;
+    isInspectorOpen.value = !!key;
+  }
+
+  function addLog(nodeKey: string | null, message: string, level: LogEntry['level'] = 'info') {
+    const entry: LogEntry = {
+      id: Date.now() + Math.random(),
+      ts: Date.now(),
+      level,
+      node: nodeKey,
+      message,
+    };
+    logs.value.push(entry);
+    if (logs.value.length > 200) logs.value.shift();
+
+    if (nodeKey && nodes.value.has(nodeKey)) {
+      const target = nodes.value.get(nodeKey)!;
+      target.logs.push(`[${new Date().toLocaleTimeString()}] ${message}`);
+      if (target.logs.length > 50) target.logs.shift();
     }
   }
 
-  function toggleSound() {
-    isMuted.value = habboAudio.toggleMute();
-    if (!isMuted.value) habboAudio.playFurniClick();
+  function updateNode(key: string, updates: Partial<PipelineNode>) {
+    if (!nodes.value.has(key)) return;
+    const current = nodes.value.get(key)!;
+    nodes.value.set(key, { ...current, ...updates });
   }
 
+  function openClipPlayer(clip: ClipData) {
+    activePreviewClip.value = clip;
+    isPlayerOpen.value = true;
+  }
+
+  function closeClipPlayer() {
+    isPlayerOpen.value = false;
+    activePreviewClip.value = null;
+  }
+
+  // Inicializar estado al cargar
   initDefaultNodes();
 
   return {
     currentView,
-    isMessengerOpen,
-    isCatalogOpen,
+    isInspectorOpen,
     isPlayerOpen,
-    isMuted,
+    isBackendMode,
     pipeline,
     nodes,
     edges,
@@ -337,16 +275,13 @@ export const usePipelineStore = defineStore('pipeline', () => {
     selectedNodeKey,
     selectedNode,
     nodeList,
+    agentSessions,
     activePreviewClip,
-    brands,
-    selectedBrand,
-    speechBubbles,
-    sseConnected,
-    connectSSE,
-    startPipeline,
+    initDefaultNodes,
     selectNode,
-    toggleSound,
-    triggerAgentSpeech,
-    loadBrands,
+    addLog,
+    updateNode,
+    openClipPlayer,
+    closeClipPlayer,
   };
 });
