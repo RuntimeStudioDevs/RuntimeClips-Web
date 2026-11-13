@@ -1,17 +1,16 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue';
-import { HabboEngine } from '@/engine/scene';
+import { HabboCanvasEngine } from '@/engine/habboEngine';
 import { usePipelineStore } from '@/stores/pipeline';
 import HabboBubble from './HabboBubble.vue';
 
 const store = usePipelineStore();
 const viewportEl = ref<HTMLElement | null>(null);
-let engine: HabboEngine | null = null;
+let engine: HabboCanvasEngine | null = null;
 
 onMounted(() => {
   if (viewportEl.value) {
-    engine = new HabboEngine(viewportEl.value);
-    engine.syncNodes(store.nodes);
+    engine = new HabboCanvasEngine(viewportEl.value);
   }
 });
 
@@ -21,17 +20,6 @@ onUnmounted(() => {
     engine = null;
   }
 });
-
-// Sincronizar nodos con el motor 3D
-watch(
-  () => store.nodes,
-  () => {
-    if (engine) {
-      engine.syncNodes(store.nodes);
-    }
-  },
-  { deep: true }
-);
 
 // Escuchar cambios de vista para recalcular tamaño
 watch(
