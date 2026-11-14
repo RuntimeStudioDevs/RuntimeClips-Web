@@ -16,7 +16,7 @@ const store = usePipelineStore();
 
     <!-- Área de Trabajo Principal -->
     <main class="main-workspace">
-      <!-- Vista 1: Oficina Agéntica Isométrica 2D -->
+      <!-- Vista 1: Oficina Agéntica 2D Isométrica -->
       <Office2dCanvas v-if="store.currentView === 'office'" />
 
       <!-- Vista 2: Grafo en Árbol Fork/Join 2D -->

@@ -2,27 +2,55 @@
 import { computed } from 'vue';
 import { usePipelineStore } from '@/stores/pipeline';
 import { mockSimulator } from '@/stores/mock';
+import { backendConnector } from '@/services/backendConnector';
 
 const store = usePipelineStore();
 
 const isRunning = computed(() => store.pipeline.status === 'running');
 const hasClips = computed(() => (store.pipeline.output?.clips?.length || 0) > 0);
 
-function toggleRun() {
-  if (isRunning.value) {
-    mockSimulator.stop();
-    store.pipeline.status = 'idle';
+// Contadores KPI del equipo de agentes
+const nodesList = computed(() => Array.from(store.nodes.values()));
+const needingHelpCount = computed(
+  () => nodesList.value.filter((n) => n.status === 'error').length
+);
+const workingCount = computed(
+  () => nodesList.value.filter((n) => n.status === 'running').length
+);
+const completedCount = computed(
+  () => nodesList.value.filter((n) => n.status === 'completed').length
+);
+
+async function toggleRun() {
+  if (store.isBackendMode) {
+    if (isRunning.value) {
+      await backendConnector.pausePipeline();
+    } else {
+      await backendConnector.startPipeline(
+        store.pipeline.url || 'https://youtube.com/watch?v=sample-runtime',
+        store.pipeline.options
+      );
+    }
   } else {
-    mockSimulator.run();
+    if (isRunning.value) {
+      mockSimulator.stop();
+      store.pipeline.status = 'idle';
+    } else {
+      mockSimulator.run();
+    }
   }
 }
 
-function handleReset() {
-  mockSimulator.stop();
-  store.initDefaultNodes();
-  store.pipeline.status = 'idle';
-  store.pipeline.output = null;
-  store.addLog(null, 'Estado del pipeline reiniciado.', 'info');
+async function handleReset() {
+  if (store.isBackendMode) {
+    await backendConnector.resetPipeline();
+  } else {
+    mockSimulator.stop();
+    store.initDefaultNodes();
+    store.pipeline.status = 'idle';
+    store.pipeline.output = null;
+    store.addLog(null, 'Estado del pipeline reiniciado.', 'info');
+  }
 }
 
 function handleInjectError() {
@@ -33,8 +61,9 @@ function toggleBackendMode() {
   store.isBackendMode = !store.isBackendMode;
   if (store.isBackendMode) {
     mockSimulator.stop();
-    store.addLog(null, 'Conectando al backend de tu compañero (http://localhost:3000)...', 'info');
+    backendConnector.connectSSE();
   } else {
+    backendConnector.disconnect();
     store.addLog(null, 'Cambiado a Modo Simulación Local.', 'info');
   }
 }
@@ -52,7 +81,7 @@ function toggleGraph() {
 
 <template>
   <header class="topbar">
-    <!-- Logotipo y Nombre -->
+    <!-- Logotipo y Título de RuntimeClips -->
     <div class="brand-group">
       <div class="brand-logo">
         <span class="logo-icon">⚡</span>
@@ -63,7 +92,37 @@ function toggleGraph() {
       </div>
     </div>
 
-    <!-- Controles del Pipeline -->
+    <!-- Indicadores KPI del Equipo (Estilo WhatsMyAgentDoing) -->
+    <div class="kpi-group">
+      <div
+        class="kpi-chip"
+        :class="{ active: needingHelpCount > 0, alert: needingHelpCount > 0 }"
+        title="Agentes que requieren tu atención o reportaron error"
+      >
+        <span class="kpi-dot red"></span>
+        <span>Te necesitan {{ needingHelpCount }}</span>
+      </div>
+
+      <div
+        class="kpi-chip"
+        :class="{ active: workingCount > 0 }"
+        title="Agentes actualmente procesando tareas"
+      >
+        <span class="kpi-dot blue" :class="{ pulse: workingCount > 0 }"></span>
+        <span>Trabajando {{ workingCount }}</span>
+      </div>
+
+      <div
+        class="kpi-chip"
+        :class="{ active: completedCount > 0 }"
+        title="Agentes que completaron su etapa con éxito"
+      >
+        <span class="kpi-dot green"></span>
+        <span>Terminados {{ completedCount }}</span>
+      </div>
+    </div>
+
+    <!-- Controles de Ejecución del Pipeline -->
     <div class="pipeline-controls">
       <button
         class="control-btn"
@@ -89,9 +148,9 @@ function toggleGraph() {
       </button>
     </div>
 
-    <!-- Selector de Modo y Acciones de Visualización -->
+    <!-- Acciones Rápidas y Navegación -->
     <div class="right-actions">
-      <!-- Toggle Modo Dual -->
+      <!-- Toggle Modo Backend / Simulación -->
       <button
         class="mode-toggle-btn"
         :class="{ 'is-backend': store.isBackendMode }"
@@ -102,7 +161,7 @@ function toggleGraph() {
         <span>{{ store.isBackendMode ? 'Backend en Vivo' : 'Simulación Local' }}</span>
       </button>
 
-      <!-- Botón Reproductor de Clips -->
+      <!-- Reproductor de Reels -->
       <button
         class="nav-btn"
         :class="{ 'has-content': hasClips }"
@@ -114,12 +173,12 @@ function toggleGraph() {
         <span>Clips ({{ store.pipeline.output?.clips?.length || 0 }})</span>
       </button>
 
-      <!-- Botón Grafo DAG -->
+      <!-- Alternar Vista de Grafo en Árbol -->
       <button
         class="nav-btn"
         :class="{ active: store.currentView === 'graph' }"
         @click="toggleGraph"
-        title="Alternar vista de grafo de dependencias"
+        title="Alternar entre vista de oficina isométrica y diagrama de flujo"
       >
         <span>📊</span>
         <span>{{ store.currentView === 'graph' ? 'Ver Oficina 2D' : 'Ver Grafo' }}</span>
@@ -135,7 +194,7 @@ function toggleGraph() {
   justify-content: space-between;
   height: 60px;
   padding: 0 24px;
-  background: rgba(15, 23, 42, 0.9);
+  background: rgba(15, 23, 42, 0.92);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
@@ -174,6 +233,67 @@ function toggleGraph() {
   font-size: 11px;
   color: #38bdf8;
   font-weight: 600;
+}
+
+.kpi-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kpi-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  transition: all 0.2s ease;
+}
+
+.kpi-chip.active {
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.kpi-chip.alert {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #f87171;
+}
+
+.kpi-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #64748b;
+}
+
+.kpi-dot.red {
+  background: #ef4444;
+}
+
+.kpi-dot.blue {
+  background: #38bdf8;
+}
+
+.kpi-dot.blue.pulse {
+  box-shadow: 0 0 8px #38bdf8;
+  animation: pulse 1.5s infinite;
+}
+
+.kpi-dot.green {
+  background: #10b981;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.2); }
 }
 
 .pipeline-controls {
